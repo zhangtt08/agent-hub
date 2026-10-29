@@ -50,9 +50,3 @@ POST /api/agent/tool      -> body { tool, input } -> { ok: true, tool, ms, data 
   }
 }
 ```
-
-## 统一入口（一个 MCP / 一个 HTTP API）
-
-五个软件（AI Flow、FrameBoost、Agent 对话管理、清影下载器、声析）可以由
-`agent-bus` 一个入口统一调用：本项目的 `agenthub.*` 工具原样暴露，
-服务没起时会自动拉起。见 `agent-bus/README.md`。本项目自己的 `agent/mcp-server.mjs` 仍可单独使用。
