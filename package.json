@@ -1,0 +1,12 @@
+{
+  "name": "agent-hub",
+  "private": true,
+  "version": "0.1.0",
+  "description": "本机 Agent 对话统一管理与清理（Tauri 桌面应用）",
+  "scripts": {
+    "build": "cargo build --release --manifest-path src-tauri/Cargo.toml",
+    "run": "cargo run --manifest-path src-tauri/Cargo.toml",
+    "agent:serve": "node agent/server.mjs",
+    "agent:mcp": "node agent/mcp-server.mjs"
+  }
+}

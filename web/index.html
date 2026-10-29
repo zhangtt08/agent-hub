@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Agent 对话管理</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23141210'/%3E%3Cpath d='M12 6.4 15.6 12 12 17.6 8.4 12Z' fill='%23FCEB3C'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<svg class="sprite" aria-hidden="true">
+  <defs>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 11.6a8 8 0 0 1-11.7 7.1L4 20.2l1.4-4.5a8 8 0 1 1 15.1-4.1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7m-8.2 0 .7 11.6A1.5 1.5 0 0 0 8.5 20h7a1.5 1.5 0 0 0 1.5-1.4L17.7 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M19.2 14.6a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9A1.7 1.7 0 0 0 10 3.6v-.2a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m20 20-4.2-4.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.3M20 5v6h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2.5h8A1.5 1.5 0 0 1 20.5 10v8a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 18z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20h16M7.5 17V10M12 17V5.5M16.5 17v-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M5 9.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19V9.5M10 13.5h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4 11 13M18 14v5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19V8a1.5 1.5 0 0 1 1.5-1.5H11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.5 4.7 4.7L19.5 6.8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15M13.5 5.5 20 12l-6.5 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3.5V8h4.5M8.5 13h7M8.5 16.5h4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5M12 7.8v.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 3 5.5 13.2H11l-1 7.8 7.5-10.2H12z" fill="currentColor"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24"><path d="M12 4.5 21 20H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 10v4M12 17.2v.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+
+    <symbol id="logo-openai" viewBox="0 0 24 24"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.7123-.8371l.134-.0761 4.5055-2.6014a.787.787 0 0 0 .393-.6816v-6.3531l1.9004 1.0977a.0791.0791 0 0 1 .0432.0676v5.249a4.492 4.492 0 0 1-4.264 4.3282zm-9.1676-3.916a4.4622 4.4622 0 0 1-.5384-2.8272l.1345.0806 4.5055 2.6014a.7773.7773 0 0 0 .7863 0l5.5028-3.1781v2.1908a.0841.0841 0 0 1-.0338.0716l-4.5463 2.6247a4.4774 4.4774 0 0 1-5.8016-.8312zm-1.3302-9.2132a4.4622 4.4622 0 0 1 2.2974-1.9705v5.351a.7773.7773 0 0 0 .3818.6857l5.4982 3.1734-1.9004 1.0972a.0841.0841 0 0 1-.0834 0l-4.5464-2.6247a4.4839 4.4839 0 0 1-1.6472-5.7121zm12.2981 3.0649-5.4939-3.192 1.9004-1.0929a.0841.0841 0 0 1 .0834 0l4.5464 2.6247a4.4677 4.4677 0 0 1-.7007 8.0779v-5.3223a.7928.7928 0 0 0-.3356-.6562zm1.8904-2.8586-.1307-.0806-4.5009-2.6252a.7773.7773 0 0 0-.7862 0L5.5127 9.9699V7.7844a.0841.0841 0 0 1 .034-.0716l4.5511-2.6152a4.4775 4.4775 0 0 1 6.6305 4.6664zm-11.9363 3.9364-1.9004-1.0929a.0841.0841 0 0 1-.0431-.0716v-5.249a4.4823 4.4823 0 0 1 7.3585-3.2006l-.1339.0766-4.5055 2.6014a.7928.7928 0 0 0-.3889.6816zm2.639-4.1663a.7773.7773 0 0 0 .3889.6654l5.4982 3.1781-1.9004 1.0977a.0841.0841 0 0 1-.0834 0L6.784 10.5561a4.4921 4.4921 0 0 1 .7062-8.0869v5.274a.7928.7928 0 0 0 .3888.6868zm9.8986-4.4575a.7773.7773 0 0 0-.3888-.6654l-5.4982-3.1781 1.9004-1.0972a.0841.0841 0 0 1 .0834 0l4.5511 2.6104a4.4846 4.4846 0 0 1-.652 8.1066v-5.274a.7928.7928 0 0 0 .0041-.5023z"/></symbol>
+    <symbol id="logo-claude" viewBox="0 0 24 24"><path d="M4.7144 15.9555 9.4318 13.3084l.0789-.2307-.0789-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.6857.0608 1.518.1032 2.2767.1578 1.6514.0972 2.4468.2559h.3888l.0546-.1579-.1332-.0972-.4137-.0389-1.6147-.1092-1.5762-.1093-2.3358-.2432-.6057-.1215L1.833 8.459l-.158-.5114.0972-.3286.3888-.2671.4797.3408.3642.2431.8507-.1858 1.9295-.2431 2.1204-.1579h.3157l.1215-.0932-.0729-.5343-.4017-.7291-1.0539-1.7835-.5461-.7785-.2795-.5845-.158-.9743.6651-.7291.3642-.1214.4374.0609.3286.2913.2315.5112.4374.9721.6783 1.3371.5219 1.0297.2064.5049.1215.4224.0608.3198h.1093l.0608-.3896.0972-.5114.4017-3.4634.158-.9782.158-.6565.316-.7785.6058-.4017.4797.2315.3897.5607-.0546.3641-.2315.5114-.4374 2.1256-.4137 3.264-.2432 1.0672h.1332l.2913-.2913.7289-.4864 1.2152-1.0296.8507-.7785 1.1439-1.0042.5343-.4137.5107-.4017.3642-.8745-.2795-.6857h-.2971l-1.1798.8507-1.6507 1.2648-2.0478 2.7215-.6768.8506-.1092-.0609.0729-.6323-.3641-1.6965-.5107-2.1693-.3043-1.0741.4375-1.0041.2431-.3409.8012-.6323.3642-.4864-.1215-.3897-.3642-.4374h-.2913l-.6565.2431-.7291.6749-.8507 1.9295-.8507 2.4839-.5343 2.3968-.2064 1.5501-.0609.7291h-.0729l-.7291-.7043-1.0576-1.4214-1.4405-1.9296-1.2459-1.3011-.7979-.9471-.3642-.9721.2431-.7292.2913-.2431.8507.1215 1.3369.8128.4137.4137.8847 1.0297 1.3972 1.8258.9736 1.518.4374.8507-.1215.2913-.2795.0608h-.0164l-1.3226-1.1507-1.3834-1.6167-1.4588-2.0591-.3004-.4743-.4017.0608-.158.1579-.2431 1.3371-.4018 2.8916-.4137 1.3972-.3641 1.0297-.3409.7291-.4017.2913h-.2431l-.2913-.3898-.2064-.7668.3408-1.4574.4018-1.1284.3641-1.259.3286-1.5501.0972-.5107-.0486-.3651-.3642.4374-1.9296 2.919z"/></symbol>
+    <symbol id="logo-gemini" viewBox="0 0 24 24"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></symbol>
+    <symbol id="logo-qwen" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.4" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8.4 11h5.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="logo-continue" viewBox="0 0 24 24"><path d="m5 6 6 6-6 6M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="logo-aider" viewBox="0 0 24 24"><path d="M12 3.5 21 20H3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.4 14.6h7.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="logo-deepseek" viewBox="0 0 24 24"><path d="M2.8 14.6c2.6 0 2.9-4.4 5.8-4.4s3.2 4.4 6.1 4.4 3.1-4.4 6.5-4.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="7.4" cy="6.6" r="1.7" fill="currentColor"/></symbol>
+    <symbol id="logo-workbuddy" viewBox="0 0 24 24"><rect x="3.6" y="3.6" width="16.8" height="16.8" rx="5.4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8.9" cy="10.6" r="1.35" fill="currentColor"/><circle cx="15.1" cy="10.6" r="1.35" fill="currentColor"/><path d="M8.6 15c1 .9 2.1 1.3 3.4 1.3s2.4-.4 3.4-1.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="logo-opencode" viewBox="0 0 24 24"><rect x="3.4" y="4.4" width="17.2" height="15.2" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m7.2 9.4 3 2.6-3 2.6M12.8 14.6h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="logo-trae" viewBox="0 0 24 24"><path d="M4 19 12 4l8 15z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 14.4h6.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="logo-qoder" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.6" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="m15.6 15.6 4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M8.6 11h4.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="logo-zcode" viewBox="0 0 24 24"><path d="M5 6h14l-9.5 12H19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+<div class="grain" aria-hidden="true"></div>
+
+<div class="titlebar" id="titlebar" hidden>
+  <div class="titlebar__brand" data-tauri-drag-region>
+    <span class="titlebar__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><rect x="3.2" y="3.2" width="17.6" height="17.6" rx="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.2 16.4 12 12 16.8 7.6 12Z" fill="currentColor"/></svg>
+    </span>
+    <span class="titlebar__name" data-tauri-drag-region>Agent 对话管理</span>
+    <span class="titlebar__tag" data-tauri-drag-region>本机 · 离线</span>
+  </div>
+  <div class="titlebar__drag" data-tauri-drag-region></div>
+  <div class="titlebar__actions">
+    <button type="button" id="winMin" aria-label="最小化" title="最小化">
+      <svg viewBox="0 0 24 24"><path d="M6 12h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+    <button type="button" id="winMax" aria-label="最大化" title="最大化">
+      <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+    </button>
+    <button type="button" id="winClose" class="is-close" aria-label="关闭" title="关闭">
+      <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="app">
+  <aside class="sidebar">
+    <a class="brand" href="#top" aria-label="回到顶部">
+      <span class="brand__mark">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.2" y="3.2" width="17.6" height="17.6" rx="6" fill="none" stroke="currentColor" stroke-width="1.7"/>
+          <path d="M12 7.2 16.4 12 12 16.8 7.6 12Z" fill="currentColor"/>
+        </svg>
+      </span>
+    </a>
+
+    <nav class="nav" aria-label="主导航">
+      <button class="nav__item is-active" type="button" data-view="overview"><svg><use href="#i-home"/></svg><span>概览</span></button>
+      <button class="nav__item" type="button" data-view="sessions"><svg><use href="#i-chat"/></svg><span>会话</span></button>
+      <button class="nav__item" type="button" data-view="projects"><svg><use href="#i-folder"/></svg><span>项目</span></button>
+      <button class="nav__item" type="button" data-view="stats"><svg><use href="#i-chart"/></svg><span>统计</span></button>
+      <button class="nav__item" type="button" data-view="settings"><svg><use href="#i-gear"/></svg><span>设置</span></button>
+    </nav>
+
+    <div class="storage" id="storageBox">
+      <div class="storage__label"><span>本地索引</span><b id="storageSize">—</b></div>
+      <div class="storage__bar"><i id="storageBar"></i></div>
+      <p id="storageMeta">正在读取…</p>
+    </div>
+
+    <div class="user">
+      <span class="user__avatar" aria-hidden="true">T</span>
+      <div class="user__meta">
+        <span class="user__name" id="userName">本机</span>
+        <span class="user__plan">只在本机运行</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main" id="top">
+    <section class="view is-active" id="view-overview" data-view="overview">
+    <header class="topbar">
+      <div class="topbar__title">
+        <h1>Agent 对话管理</h1>
+        <p class="topbar__sub" id="scanMeta">正在扫描本机 Agent 数据…</p>
+      </div>
+      <div class="controls">
+        <label class="search">
+          <svg><use href="#i-search"/></svg>
+          <input id="globalSearch" type="search" placeholder="搜索会话、项目或路径…" aria-label="搜索会话、项目或路径" autocomplete="off">
+          <kbd>⌘K</kbd>
+        </label>
+        <button class="icon-btn" type="button" id="rescanBtn" aria-label="重新扫描" title="重新扫描">
+          <svg><use href="#i-refresh"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="kpis" id="kpis" aria-label="核心指标"></section>
+
+    <section class="mid" id="sessions">
+      <section class="panel panel--agents" aria-labelledby="agentsTitle">
+        <div class="panel__head">
+          <div>
+            <h2 id="agentsTitle">Agent 对话总览</h2>
+            <p>自动识别本机 Agent 的会话文件，按来源汇总</p>
+          </div>
+          <span class="link" id="agentDetected"></span>
+        </div>
+        <div class="agents" id="agents"></div>
+        <p class="agents__note" id="agentsNote"></p>
+      </section>
+
+      <section class="clean" id="clean" aria-labelledby="cleanTitle">
+        <div class="clean__head">
+          <h2 id="cleanTitle">清理中心</h2>
+          <button class="link" type="button" id="cleanHint">
+            按文件清理 <svg><use href="#i-info"/></svg>
+          </button>
+        </div>
+        <p class="clean__lead">发现 <b id="cleanLead">0</b> 个可清理会话，合计 <b id="cleanLeadSize">0</b></p>
+        <div class="clean__list" id="buckets"></div>
+        <p class="clean__hint" id="cleanTip" hidden></p>
+        <button class="btn-dark" type="button" id="cleanBtn">
+          <svg><use href="#i-trash"/></svg>
+          <span id="cleanBtnLabel">清理选中项</span>
+          <svg class="arrow"><use href="#i-arrow"/></svg>
+        </button>
+      </section>
+    </section>
+
+    <section class="bottom">
+      <section class="panel table-panel" aria-labelledby="tableTitle">
+        <h2 id="tableTitle" hidden>会话记录</h2>
+        <div class="tabs" role="tablist" aria-label="会话视图">
+          <button class="tab is-active" role="tab" aria-selected="true" data-tab="all">全部会话<span class="tab__count" id="countAll">0</span></button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="recent">最近 7 天</button>
+          <button class="tab" role="tab" aria-selected="false" data-tab="archived">已归档<span class="tab__count" id="countArchived">0</span></button>
+        </div>
+        <div class="filters">
+          <select class="select" id="agentFilter" aria-label="按 Agent 筛选">
+            <option value="all">全部 Agent</option>
+          </select>
+          <select class="select" id="statusFilter" aria-label="按状态筛选">
+            <option value="all">全部状态</option>
+            <option value="active">活跃</option>
+            <option value="archived">已归档</option>
+            <option value="large">大文件</option>
+          </select>
+          <label class="filters__search">
+            <svg><use href="#i-search"/></svg>
+            <input id="tableSearch" type="search" placeholder="搜索会话标题或项目…" aria-label="搜索会话标题或项目" autocomplete="off">
+          </label>
+          <div class="bulk" id="bulkBar" hidden>
+            <span id="bulkCount">已选 0 项</span>
+            <button type="button" id="bulkArchive">归档</button>
+            <button type="button" id="bulkDelete">删除</button>
+          </div>
+        </div>
+        <div class="table-wrap" id="tablePanel" role="tabpanel">
+          <table>
+            <colgroup>
+              <col style="width:34px"><col style="width:56px"><col style="width:132px">
+              <col><col style="width:62px"><col style="width:74px"><col style="width:78px">
+              <col style="width:62px"><col style="width:132px">
+            </colgroup>
+            <thead>
+              <tr>
+                <th class="c-check">
+                  <label class="check">
+                    <input type="checkbox" id="checkAll" aria-label="全选">
+                    <span class="check__box"><svg><use href="#i-check"/></svg></span>
+                  </label>
+                </th>
+                <th>Agent</th>
+                <th>项目</th>
+                <th>会话</th>
+                <th class="t-right">消息</th>
+                <th class="t-right">大小</th>
+                <th>最后更新</th>
+                <th>状态</th>
+                <th style="text-align:right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody">
+              <tr class="skeleton-row"><td colspan="9"><div class="skeleton"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel preview" aria-labelledby="previewTitle">
+        <div class="panel__head">
+          <h2 id="previewTitle">会话预览</h2>
+          <button class="link" type="button" id="openFolderBtn" hidden>
+            打开所在位置 <svg><use href="#i-external"/></svg>
+          </button>
+        </div>
+        <div class="preview__body" id="previewBody">
+          <div class="preview__empty">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chat"/></svg>
+            <p>选择左侧任意会话，查看对话内容</p>
+          </div>
+        </div>
+      </section>
+    </section>
+    </section>
+
+    <section class="view" id="view-sessions" data-view="sessions">
+      <header class="topbar">
+        <div class="topbar__title">
+          <h1>会话</h1>
+          <p class="topbar__sub" id="sessionsMeta">按最近更新排序</p>
+        </div>
+        <div class="controls">
+          <label class="search">
+            <svg><use href="#i-search"/></svg>
+            <input id="sessionSearch" type="search" placeholder="搜索标题、项目或路径…" aria-label="搜索会话" autocomplete="off">
+          </label>
+        </div>
+      </header>
+      <div class="browser">
+        <section class="browser__list" aria-label="会话列表">
+          <div class="listbar">
+            <select class="select" id="sessionAgentFilter" aria-label="按 Agent 筛选"></select>
+            <select class="select" id="sortSelect" aria-label="排序">
+              <option value="recent">最近更新</option>
+              <option value="size">占用最大</option>
+              <option value="messages">消息最多</option>
+            </select>
+            <button class="chip" type="button" id="starFilter" aria-pressed="false">★ 收藏</button>
+            <span class="listbar__count" id="listCount"></span>
+          </div>
+          <div class="rows" id="sessionRows" role="listbox" aria-label="会话"></div>
+        </section>
+        <section class="browser__detail" id="transcriptPane" aria-label="会话内容">
+          <div class="transcript__empty" id="transcriptEmpty">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chat"/></svg>
+            <p>从左侧选择一条会话，查看完整对话</p>
+          </div>
+          <div class="transcript" id="transcript" hidden>
+            <header class="transcript__head">
+              <div class="transcript__title">
+                <h2 id="tTitle"></h2>
+                <p id="tMeta"></p>
+              </div>
+              <div class="transcript__actions">
+                <button class="ghost-btn" type="button" id="tStar">收藏</button>
+                <button class="ghost-btn" type="button" id="tPrompts">只看提问</button>
+                <button class="ghost-btn" type="button" id="tCopyPath">复制路径</button>
+                <button class="ghost-btn" type="button" id="tExport">导出 Markdown</button>
+                <button class="ghost-btn" type="button" id="tReveal">打开位置</button>
+                <button class="ghost-btn" type="button" id="tArchive">归档</button>
+                <button class="ghost-btn ghost-btn--danger" type="button" id="tDelete">删除</button>
+              </div>
+            </header>
+            <div class="transcript__scroll" id="tScroll"></div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="view" id="view-projects" data-view="projects">
+      <header class="topbar">
+        <div class="topbar__title">
+          <h1>项目</h1>
+          <p class="topbar__sub" id="projectsMeta">按项目汇总会话与占用</p>
+        </div>
+      </header>
+      <div class="cards" id="projectCards"></div>
+    </section>
+
+    <section class="view" id="view-stats" data-view="stats">
+      <header class="topbar">
+        <div class="topbar__title">
+          <h1>统计</h1>
+          <p class="topbar__sub" id="statsMeta">本机索引的分布与清理空间</p>
+        </div>
+      </header>
+      <div class="stats" id="statsBody"></div>
+    </section>
+
+    <section class="view" id="view-settings" data-view="settings">
+      <header class="topbar">
+        <div class="topbar__title">
+          <h1>设置</h1>
+          <p class="topbar__sub" id="settingsMeta">数据来源、删除方式与本机信息</p>
+        </div>
+      </header>
+      <div class="settings" id="settingsBody"></div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal__scrim" data-close></div>
+  <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <header class="modal__head">
+      <h3 id="modalTitle">确认</h3>
+      <button class="icon-btn icon-btn--ghost" type="button" data-close aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+    </header>
+    <div class="modal__body" id="modalBody"></div>
+    <footer class="modal__foot" id="modalFoot"></footer>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="busy" id="busy" hidden><div class="busy__inner"><span class="spinner"></span><span id="busyText">正在扫描…</span></div></div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>

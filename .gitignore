@@ -1,0 +1,14 @@
+# 构建产物（从 Releases 下载）
+AgentHub.exe
+AgentHub-Setup-*.exe
+src-tauri/target/
+*.pdb
+
+# 依赖与运行时
+node_modules/
+agent/.endpoint
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
