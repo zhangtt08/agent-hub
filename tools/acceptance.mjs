@@ -1,5 +1,6 @@
 // Full functional pass: every view, transcript, search, star, prompts-only,
-// cleanup buckets, and a real delete round-trip on a throwaway session.
+// cleanup buckets, and layout checks. (Delete is exercised at the API level
+// by tools/agent-smoke.mjs; this script only counts, it never deletes data.)
 const port = process.argv[2] || '9223';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -44,7 +45,7 @@ const check = (name, ok, detail) => (ok ? report.pass : report.fail).push(detail
 // 1. state shape
 const state = await ev(`window.__TAURI__.core.invoke('get_state')`);
 check('state has conversations', state.conversations.length > 0, state.conversations.length);
-check('state has buckets', state.buckets.length >= 5, state.buckets.map((b) => b.key));
+check('state has buckets', state.buckets.length >= 3, state.buckets.map((b) => b.key));
 check('avatar is T', (await ev(`document.querySelector('.user__avatar').textContent`)) === 'T');
 
 // 2. all views render
@@ -93,7 +94,7 @@ const buckets = await ev(`(() => {
   const rows = Array.from(document.querySelectorAll('.clean__row'));
   return rows.map(r => ({ label: r.querySelector('.clean__label').textContent, num: r.querySelector('.clean__num').textContent, checked: r.querySelector('input').checked }));
 })()`);
-check('cleanup has 5 buckets', buckets.length === 5, buckets.map((b) => b.label));
+check('cleanup has 3 buckets', buckets.length === 3, buckets.map((b) => b.label));
 const selectable = buckets.filter((b) => b.checked && !b.num.startsWith('0'));
 check('cleanup has a checked non-empty bucket', selectable.length > 0, selectable.map((b) => b.label));
 

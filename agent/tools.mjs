@@ -93,8 +93,36 @@ function insideAgentRoots(target) {
   );
 }
 
-// 扫描所有已纳管的会话记录
+// 扫描所有已纳管的会话记录（重活：walk + 读文件 + 解压，最多耗时数秒）。
+// 8 个工具都直接调它，而 Node 是单线程 —— 期间连 /api/health 都无响应。
+// 所以套一层短 TTL 缓存；key 含 state.json 的 mtime，加星/归档/删除写状态
+// 后立即失效，delete 工具本身也会显式失效（文件没了）。
+const SCAN_TTL_MS = 5000;
+let scanCache = { stamp: '', at: 0, rows: null };
+
+function stateStamp() {
+  try {
+    return String(fs.statSync(path.join(dataDir(), 'state.json')).mtimeMs);
+  } catch {
+    return 'none';
+  }
+}
+
+function invalidateScanCache() {
+  scanCache = { stamp: '', at: 0, rows: null };
+}
+
 function scanAllRows() {
+  const stamp = stateStamp();
+  if (scanCache.rows && scanCache.stamp === stamp && Date.now() - scanCache.at < SCAN_TTL_MS) {
+    return scanCache.rows;
+  }
+  const rows = scanAllRowsUncached();
+  scanCache = { stamp, at: Date.now(), rows };
+  return rows;
+}
+
+function scanAllRowsUncached() {
   const state = loadState();
   const deletedSet = new Set(Object.keys(state.deleted || {}));
   const archivedSet = new Set(Object.keys(state.archived || {}));
@@ -227,6 +255,7 @@ function scanAllRows() {
       for (const full of walkFiles(projects, (n) => n.endsWith('.jsonl'))) {
         const parsed = parseCliJsonl(full);
         if (!parsed || parsed.messages === 0) continue;
+        const st = fs.statSync(full);
         const id = fnv1a(`${agent}:${path.basename(full, '.jsonl')}`.toLowerCase());
         if (deletedSet.has(id)) continue;
         rows.push({
@@ -236,9 +265,9 @@ function scanAllRows() {
           project: parsed.project || '未识别项目',
           project_path: parsed.cwd || '',
           path: full,
-          size: fs.statSync(full).size,
-          mtime_ms: Math.floor(fs.statSync(full).mtimeMs),
-          mtime: new Date(fs.statSync(full).mtimeMs).toISOString(),
+          size: st.size,
+          mtime_ms: Math.floor(st.mtimeMs),
+          mtime: new Date(st.mtimeMs).toISOString(),
           messages: parsed.messages,
           starred: starredSet.has(id),
           archived: archivedSet.has(id),
@@ -780,6 +809,7 @@ export const tools = [
         deleted.push(id);
       }
       saveState(state);
+      invalidateScanCache();
 
       return {
         success: true,

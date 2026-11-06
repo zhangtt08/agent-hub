@@ -32,6 +32,7 @@ struct Inner {
     archived: std::collections::HashMap<String, String>,
     deleted: std::collections::HashMap<String, String>,
     starred: std::collections::HashSet<String>,
+    snippets: std::collections::HashMap<String, index::Snippet>,
     data_dir: PathBuf,
 }
 
@@ -47,6 +48,7 @@ impl Inner {
             archived: saved.archived,
             deleted: saved.deleted,
             starred: saved.starred.into_iter().collect(),
+            snippets: std::collections::HashMap::new(),
             data_dir,
         }
     }
@@ -71,6 +73,10 @@ fn visible_rows(inner: &Inner) -> Vec<Conversation> {
             let mut c = r.clone();
             c.archived_by_user = inner.archived.contains_key(&r.id);
             c.archived = c.archived_by_user || c.in_archive_dir;
+            if let Some(snippet) = inner.snippets.get(&r.id) {
+                c.last_user = snippet.user.clone();
+                c.last_assistant = snippet.assistant.clone();
+            }
             c
         })
         .collect()
@@ -158,21 +164,25 @@ fn get_state(state: State<AppState>) -> Payload {
 
 fn spawn_scan(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        {
+        let previous = {
             let state = app.state::<AppState>();
             let mut inner = state.inner.lock().unwrap();
             if inner.progress.running {
                 return;
             }
             inner.progress = Progress { running: true, done: 0, total: 0 };
-        }
+            inner.rows.clone()
+        };
 
-        let output = scan::scan(&mut |done, total| {
-            if let Ok(mut inner) = app.state::<AppState>().inner.lock() {
-                inner.progress.done = done;
-                inner.progress.total = total;
-            }
-        });
+        let output = scan::scan(
+            &mut |done, total| {
+                if let Ok(mut inner) = app.state::<AppState>().inner.lock() {
+                    inner.progress.done = done;
+                    inner.progress.total = total;
+                }
+            },
+            &previous,
+        );
 
         let state = app.state::<AppState>();
         let (rows, data_dir) = {
@@ -194,10 +204,17 @@ fn spawn_scan(app: tauri::AppHandle) {
         };
 
         // Build the search index off the UI thread; unchanged files are skipped.
+        // 索引完成后顺手取出每个会话的最近一轮问答摘要，列表就能像聊天记录一样
+        // 直接显示「你说了什么 / Agent 回了什么」，而不用先点开每个会话。
         INDEXING.store(true, std::sync::atomic::Ordering::Relaxed);
+        let app_for_index = app.clone();
         std::thread::spawn(move || {
             if let Some(conn) = index::open(&data_dir.join("index.db")) {
                 index::sync(&conn, &rows, &|c| preview::extract_all(c));
+                let snippets = index::latest_snippets(&conn);
+                if let Ok(mut inner) = app_for_index.state::<AppState>().inner.lock() {
+                    inner.snippets = snippets;
+                }
             }
             INDEXING.store(false, std::sync::atomic::Ordering::Relaxed);
         });
@@ -411,13 +428,17 @@ fn finish_delete(state: &State<'_, AppState>, mut result: DeleteResult) -> Resul
 
 #[tauri::command]
 fn preview_conversation(id: String, state: State<AppState>) -> Result<Preview, String> {
-    let inner = state.inner.lock().unwrap();
-    let row = inner
-        .rows
-        .iter()
-        .find(|r| r.id == id)
-        .cloned()
-        .ok_or_else(|| "会话不存在".to_string())?;
+    // build() 解压大会话可达数十 MB，持锁执行会卡死轮询中的 get_state，
+    // 所以锁内只做查找+克隆，重活在锁外。
+    let row = {
+        let inner = state.inner.lock().unwrap();
+        inner
+            .rows
+            .iter()
+            .find(|r| r.id == id)
+            .cloned()
+            .ok_or_else(|| "会话不存在".to_string())?
+    };
     preview::build(&row)
 }
 

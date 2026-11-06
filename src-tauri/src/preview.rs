@@ -53,9 +53,34 @@ fn tidy(text: &str, max: usize) -> String {
     }
 }
 
+fn is_injected_user_text(text: &str) -> bool {
+    let t = text.trim_start();
+    [
+        "Current runtime context",
+        "Current working directory:",
+        "Continue working toward the active thread goal",
+        "The objective below is user-provided data",
+        "This session is being continued",
+        "Time sampled while preparing turn",
+        "[Request interrupted by user]",
+        "[SYSTEM NOTIFICATION",
+        "<codex_internal_context",
+        "<untrusted_objective>",
+        "<environment_context>",
+        "<system-reminder>",
+        "system-reminder",
+        "# AGENTS.md",
+        "Here is a list of plugins",
+        "The following is the Codex agent history",
+        "we're continuing",
+    ]
+    .iter()
+    .any(|prefix| t.starts_with(prefix))
+}
+
 fn push_msg(list: &mut Vec<PreviewMessage>, role: &str, text: &str, time: &str, max: usize) {
     let t = tidy(text, max);
-    if t.is_empty() {
+    if t.is_empty() || (role == "user" && is_injected_user_text(&t)) {
         return;
     }
     if let Some(last) = list.last() {
@@ -72,6 +97,12 @@ fn content_text(content: &Value) -> String {
         Value::Array(items) => items
             .iter()
             .filter_map(|it| {
+                // Agent 的过程消息会混入 reasoning / tool-call 片段；列表和对话
+                // 只保留真正交付给用户的文字（text / input_text / output_text）。
+                let kind = it.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+                if !kind.is_empty() && kind != "text" && kind != "input_text" && kind != "output_text" {
+                    return None;
+                }
                 it.get("text")
                     .and_then(|t| t.as_str())
                     .or_else(|| it.get("input_text").and_then(|t| t.as_str()))

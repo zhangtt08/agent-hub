@@ -37,6 +37,11 @@ pub struct Conversation {
     pub archived_by_user: bool,
     pub readonly: bool,
     pub previewable: bool,
+    /// 最近一轮问答的短摘要，用于会话列表直接辨认内容。
+    #[serde(default)]
+    pub last_user: String,
+    #[serde(default)]
+    pub last_assistant: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]

@@ -317,6 +317,8 @@ pub fn discover(budget: usize) -> Vec<Discovered> {
                 // understand is exactly how real conversations got lost.
                 readonly: true,
                 previewable: true,
+                last_user: String::new(),
+                last_assistant: String::new(),
             });
         }
         if rows.is_empty() {

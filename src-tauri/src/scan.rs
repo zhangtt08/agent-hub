@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufRead, Read};
+use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Local, TimeZone};
 use serde_json::Value;
 
+use crate::index;
 use crate::model::{AgentReport, Conversation};
 
 pub const CODEX: &str = "codex";
@@ -232,6 +233,11 @@ fn content_text(content: &Value) -> String {
         Value::Array(items) => items
             .iter()
             .filter_map(|it| {
+                // 只取交付正文，跳过 reasoning / tool-call 等过程片段。
+                let kind = it.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+                if !kind.is_empty() && kind != "text" && kind != "input_text" && kind != "output_text" {
+                    return None;
+                }
                 it.get("text")
                     .and_then(|t| t.as_str())
                     .or_else(|| it.get("input_text").and_then(|t| t.as_str()))
@@ -239,9 +245,65 @@ fn content_text(content: &Value) -> String {
             })
             .collect::<Vec<_>>()
             .join(" "),
-        Value::Object(o) => o.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string(),
+        Value::Object(o) => {
+            let kind = o.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+            if !kind.is_empty() && kind != "text" && kind != "input_text" && kind != "output_text" {
+                String::new()
+            } else {
+                o.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string()
+            }
+        }
         _ => String::new(),
     }
+}
+
+/// Qoder / OpenCode 把消息存成 JSON：文本在 parts/content 里，thinking 和 tool
+/// 调用不算对话正文。只取 type=text 的片段，列表摘要才像聊天记录。
+fn json_message_text(raw: &str) -> String {
+    let Ok(v) = serde_json::from_str::<Value>(raw) else { return String::new() };
+    let mut out: Vec<String> = Vec::new();
+    if let Some(parts) = v.get("parts").and_then(|p| p.as_array()) {
+        for part in parts {
+            let kind = part.get("type").and_then(|t| t.as_str()).unwrap_or_default();
+            if kind == "text" || kind == "input_text" || kind == "output_text" {
+                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                    out.push(text.to_string());
+                }
+            }
+        }
+    }
+    // OpenCode 把消息存在 data JSON 里，正文通常在 data.content / data.text。
+    if out.is_empty() {
+        if let Some(data) = v.get("data") {
+            if let Some(items) = data.get("content").and_then(|c| c.as_array()) {
+                for item in items {
+                    if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                        out.push(text.to_string());
+                    }
+                }
+            } else if let Some(text) = data.get("content").and_then(|c| c.as_str()) {
+                out.push(text.to_string());
+            }
+            if let Some(text) = data.get("text").and_then(|t| t.as_str()) {
+                out.push(text.to_string());
+            }
+        }
+    }
+    if let Some(items) = v.get("content").and_then(|c| c.as_array()) {
+        for item in items {
+            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                out.push(text.to_string());
+            }
+        }
+    } else if let Some(text) = v.get("content").and_then(|c| c.as_str()) {
+        out.push(text.to_string());
+    }
+    if out.is_empty() {
+        if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+            out.push(text.to_string());
+        }
+    }
+    out.join("\n")
 }
 
 fn count_in(data: &[u8], patterns: &[&[u8]], counts: &mut [u64]) {
@@ -328,10 +390,29 @@ fn open_ro(path: &Path) -> Option<rusqlite::Connection> {
 pub fn load_codex_thread_names() -> HashMap<String, String> {
     let mut map = HashMap::new();
     let file = home().join(".codex").join("session_index.jsonl");
-    let text = match fs::read_to_string(&file) {
+    // 该索引随使用无限增长，只用于按 session id 查标题；超大时只读尾部，
+    // 避免扫描时把整份历史读进内存。
+    const MAX_TAIL: u64 = 32 * 1024 * 1024;
+    let mut text = match fs::read_to_string(&file) {
         Ok(t) => t,
         Err(_) => return map,
     };
+    if let Ok(md) = fs::metadata(&file) {
+        if md.len() > MAX_TAIL {
+            if let Ok(mut f) = File::open(&file) {
+                let start = md.len() - MAX_TAIL;
+                if f.seek(SeekFrom::Start(start)).is_ok() {
+                    let mut tail = String::new();
+                    if f.read_to_string(&mut tail).is_ok() {
+                        // 丢掉被截断的半行
+                        if let Some(pos) = tail.find('\n') {
+                            text = tail[pos + 1..].to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
     for line in text.lines() {
         if let Ok(v) = serde_json::from_str::<Value>(line) {
             let id = v.get("id").and_then(|x| x.as_str()).unwrap_or_default().to_lowercase();
@@ -353,11 +434,28 @@ fn codex_conversation(path: &Path, in_archive: bool, names: &HashMap<String, Str
     let (head, counts) = if is_zst {
         zstd_head_and_counts(path, 1_500_000, &[b"\"role\":\"user\"", b"\"role\":\"assistant\""]).ok()?
     } else {
+        // 单次遍历：先读 head，再从同一句柄继续计数，几百 MB 的 rollout 只读一遍磁盘。
+        let patterns: &[&[u8]] = &[b"\"role\":\"user\"", b"\"role\":\"assistant\""];
         let mut f = File::open(path).ok()?;
         let mut buf = vec![0u8; 1_500_000];
         let n = f.read(&mut buf).ok()?;
         let head = String::from_utf8_lossy(&buf[..n]).into_owned();
-        let counts = count_file(path, &[b"\"role\":\"user\"", b"\"role\":\"assistant\""]).ok()?;
+        let mut counts = vec![0u64; patterns.len()];
+        let head_data = &buf[..n];
+        count_in(head_data, patterns, &mut counts);
+        let mut carry = head_data[head_data.len().saturating_sub(96)..].to_vec();
+        loop {
+            let read = f.read(&mut buf).ok()?;
+            if read == 0 {
+                break;
+            }
+            let mut data = Vec::with_capacity(carry.len() + read);
+            data.extend_from_slice(&carry);
+            data.extend_from_slice(&buf[..read]);
+            count_in(&data, patterns, &mut counts);
+            let keep = data.len().saturating_sub(96);
+            carry = data[keep..].to_vec();
+        }
         (head, counts)
     };
 
@@ -433,6 +531,8 @@ fn codex_conversation(path: &Path, in_archive: bool, names: &HashMap<String, Str
         archived_by_user: false,
         readonly: false,
         previewable: true,
+        last_user: String::new(),
+        last_assistant: String::new(),
     })
 }
 
@@ -502,16 +602,49 @@ fn dsh_conversation(path: &Path) -> Option<Conversation> {
         archived_by_user: false,
         readonly: false,
         previewable: true,
+        last_user: String::new(),
+        last_assistant: String::new(),
     })
 }
 
 /* ------------------------------------------------------------ antigravity */
+
+/// Antigravity 把正文分块写进 conversation_summaries.db 的 FTS 表：
+/// user_body / agent_body 就是这一块的提问与回复。取每段最近一块即可。
+fn antigravity_snippets(path: &Path) -> HashMap<String, (String, String)> {
+    let mut out: HashMap<String, (String, String)> = HashMap::new();
+    let Some(conn) = open_ro(path) else { return out };
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT conversation_id, COALESCE(user_body,''), COALESCE(agent_body,'')\n         FROM conversations_fts\n         ORDER BY conversation_id, chunk_last_step DESC",
+    ) else {
+        return out;
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    }) else {
+        return out;
+    };
+    for (id, user, agent) in rows.flatten() {
+        let item = out.entry(id).or_insert_with(|| (String::new(), String::new()));
+        if item.0.is_empty() {
+            let text = index::compact(&user, 220);
+            if !text.is_empty() && !index::is_injected_user_text(&text) {
+                item.0 = text;
+            }
+        }
+        if item.1.is_empty() {
+            item.1 = index::compact(&agent, 220);
+        }
+    }
+    out
+}
 
 fn antigravity_rows() -> Vec<Conversation> {
     let base = agent_home(ANTIGRAVITY);
     let dir = base.join("conversations");
     let mut out = Vec::new();
     let mut summaries: HashMap<String, (String, u64, String, String)> = HashMap::new();
+    let snippets = antigravity_snippets(&base.join("conversation_summaries.db"));
 
     if let Some(conn) = open_ro(&base.join("conversation_summaries.db")) {
         if let Ok(mut stmt) = conn.prepare(
@@ -596,12 +729,47 @@ fn antigravity_rows() -> Vec<Conversation> {
             archived_by_user: false,
             readonly: false,
             previewable: false,
+            last_user: snippets.get(&key).map(|s| s.0.clone()).unwrap_or_default(),
+            last_assistant: snippets.get(&key).map(|s| s.1.clone()).unwrap_or_default(),
         });
     }
     out
 }
 
 /* -------------------------------------------------------------- workbuddy */
+
+/// WorkBuddy 的消息表结构随版本变化，这里只做「有则读、没有就留空」的尽力而为
+/// 查询，绝不因为某个表不存在就让整次扫描失败。
+fn db_session_snippets(conn: &rusqlite::Connection) -> HashMap<String, (String, String)> {
+    let mut out: HashMap<String, (String, String)> = HashMap::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT session_id, role, content FROM messages
+         WHERE role IN ('user', 'assistant')
+         ORDER BY rowid DESC LIMIT 2000",
+    ) else {
+        return out;
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    }) else {
+        return out;
+    };
+    for (id, role, text) in rows.flatten() {
+        let item = out.entry(id).or_insert_with(|| (String::new(), String::new()));
+        let text = index::compact(&text, 220);
+        if text.is_empty() {
+            continue;
+        }
+        if role == "user" {
+            if item.0.is_empty() && !index::is_injected_user_text(&text) {
+                item.0 = text;
+            }
+        } else if item.1.is_empty() {
+            item.1 = text;
+        }
+    }
+    out
+}
 
 fn workbuddy_rows() -> Vec<Conversation> {
     let db = agent_home(WORKBUDDY).join("workbuddy.db");
@@ -610,6 +778,7 @@ fn workbuddy_rows() -> Vec<Conversation> {
         None => return Vec::new(),
     };
     let mut out = Vec::new();
+    let snippets = db_session_snippets(&conn);
     let sql = "SELECT id, COALESCE(cwd,''), COALESCE(custom_title,title,''), COALESCE(created_at,0), COALESCE(updated_at,0), COALESCE(status,'') FROM sessions WHERE deleted_at IS NULL";
     if let Ok(mut stmt) = conn.prepare(sql) {
         if let Ok(rows) = stmt.query_map([], |row| {
@@ -646,6 +815,8 @@ fn workbuddy_rows() -> Vec<Conversation> {
                     archived_by_user: false,
                     readonly: true,
                     previewable: false,
+                    last_user: snippets.get(&r.0).map(|s| s.0.clone()).unwrap_or_default(),
+                    last_assistant: snippets.get(&r.0).map(|s| s.1.clone()).unwrap_or_default(),
                 });
             }
         }
@@ -655,6 +826,38 @@ fn workbuddy_rows() -> Vec<Conversation> {
 
 /* ---------------------------------------------------------------- opencode */
 
+/// OpenCode 的 session_message.data 是 JSON，type 为 user / assistant / tool 等。
+fn opencode_snippets(conn: &rusqlite::Connection) -> HashMap<String, (String, String)> {
+    let mut out: HashMap<String, (String, String)> = HashMap::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT session_id, type, data FROM session_message
+         WHERE type IN ('user', 'assistant')
+         ORDER BY time_created DESC LIMIT 2000",
+    ) else {
+        return out;
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    }) else {
+        return out;
+    };
+    for (id, role, raw) in rows.flatten() {
+        let item = out.entry(id).or_insert_with(|| (String::new(), String::new()));
+        let text = index::compact(&json_message_text(&raw), 220);
+        if text.is_empty() {
+            continue;
+        }
+        if role == "user" {
+            if item.0.is_empty() && !index::is_injected_user_text(&text) {
+                item.0 = text;
+            }
+        } else if item.1.is_empty() {
+            item.1 = text;
+        }
+    }
+    out
+}
+
 fn opencode_rows() -> Vec<Conversation> {
     let db = agent_home(OPENCODE).join("opencode.db");
     let conn = match open_ro(&db) {
@@ -662,6 +865,7 @@ fn opencode_rows() -> Vec<Conversation> {
         None => return Vec::new(),
     };
     let mut out = Vec::new();
+    let snippets = opencode_snippets(&conn);
     let sql = "SELECT s.id, COALESCE(s.title,''), COALESCE(s.directory,''), COALESCE(s.time_created,0), COALESCE(s.time_updated,0), \
                (SELECT COUNT(*) FROM session_message m WHERE m.session_id = s.id AND m.type IN ('user','assistant')) \
                FROM session_v2 s";
@@ -700,6 +904,8 @@ fn opencode_rows() -> Vec<Conversation> {
                     archived_by_user: false,
                     readonly: true,
                     previewable: false,
+                    last_user: snippets.get(&r.0).map(|s| s.0.clone()).unwrap_or_default(),
+                    last_assistant: snippets.get(&r.0).map(|s| s.1.clone()).unwrap_or_default(),
                 });
             }
         }
@@ -753,6 +959,8 @@ fn cli_jsonl_conversation(agent: &str, path: &Path) -> Option<Conversation> {
     let mut cwd = String::new();
     let mut created_ms = 0i64;
     let mut messages = 0u64;
+    let mut last_user = String::new();
+    let mut last_assistant = String::new();
 
     for line in reader.lines().map_while(Result::ok).take(4000) {
         if !line.starts_with('{') {
@@ -780,15 +988,25 @@ fn cli_jsonl_conversation(agent: &str, path: &Path) -> Option<Conversation> {
         match v.get("type").and_then(|t| t.as_str()) {
             Some("user") => {
                 messages += 1;
+                let text = content_text(&v["message"]["content"]);
                 if title.is_empty() {
-                    let text = content_text(&v["message"]["content"]);
                     title = clean_title(&text, 68);
                 }
                 if created_ms == 0 {
                     created_ms = parse_iso_ms(v.get("timestamp").and_then(|t| t.as_str()).unwrap_or_default());
                 }
+                let compacted = index::compact(&text, 220);
+                if !compacted.is_empty() && !index::is_injected_user_text(&compacted) {
+                    last_user = compacted;
+                }
             }
-            Some("assistant") => messages += 1,
+            Some("assistant") => {
+                messages += 1;
+                let text = index::compact(&content_text(&v["message"]["content"]), 220);
+                if !text.is_empty() {
+                    last_assistant = text;
+                }
+            }
             _ => {}
         }
     }
@@ -831,6 +1049,8 @@ fn cli_jsonl_conversation(agent: &str, path: &Path) -> Option<Conversation> {
         archived_by_user: false,
         readonly: false,
         previewable: true,
+        last_user,
+        last_assistant,
     })
 }
 
@@ -838,6 +1058,39 @@ fn parse_iso_ms(text: &str) -> i64 {
     chrono::DateTime::parse_from_rfc3339(text)
         .map(|d| d.timestamp_millis())
         .unwrap_or(0)
+}
+
+/// Qoder 的正文存在 chat_session_messages.payload_json 里，取最近几条后按角色
+/// 解析出可读文本。查询走 (session_id, role, sequence) 索引，不扫全表。
+fn qoder_snippets(conn: &rusqlite::Connection) -> HashMap<String, (String, String)> {
+    let mut out: HashMap<String, (String, String)> = HashMap::new();
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT session_id, role, payload_json FROM chat_session_messages
+         WHERE role IN ('user', 'assistant')
+         ORDER BY created_at DESC LIMIT 2000",
+    ) else {
+        return out;
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    }) else {
+        return out;
+    };
+    for (id, role, raw) in rows.flatten() {
+        let item = out.entry(id).or_insert_with(|| (String::new(), String::new()));
+        let text = index::compact(&json_message_text(&raw), 220);
+        if text.is_empty() {
+            continue;
+        }
+        if role == "user" {
+            if item.0.is_empty() && !index::is_injected_user_text(&text) {
+                item.0 = text;
+            }
+        } else if item.1.is_empty() {
+            item.1 = text;
+        }
+    }
+    out
 }
 
 fn qoder_rows() -> Vec<Conversation> {
@@ -879,6 +1132,7 @@ fn qoder_rows() -> Vec<Conversation> {
             Ok(r) => r,
             Err(_) => continue,
         };
+        let snippets = qoder_snippets(&conn);
         while let Some(Ok(r)) = rows.next() {
             let mut project = project_from_path(&r.2);
             // Qoder stores each session in .../<date>/<8-hex-id>; the date is the useful label.
@@ -914,6 +1168,8 @@ fn qoder_rows() -> Vec<Conversation> {
                 archived_by_user: false,
                 readonly: true,
                 previewable: false,
+                last_user: snippets.get(&r.0).map(|s| s.0.clone()).unwrap_or_default(),
+                last_assistant: snippets.get(&r.0).map(|s| s.1.clone()).unwrap_or_default(),
             });
         }
     }
@@ -922,9 +1178,19 @@ fn qoder_rows() -> Vec<Conversation> {
 
 /* ---------------------------------------------------------------- scan */
 
-pub fn scan(progress: &mut dyn FnMut(usize, usize)) -> ScanOutput {
+/// (path, size, mtime) -> 上次扫描得到的行。文件没动过就不再重新解析，
+/// 重扫的磁盘开销只落在真正变化的会话上。
+fn reuse_key(path: &str, size: u64, mtime_ms: i64) -> String {
+    format!("{}|{}|{}", path, size, mtime_ms)
+}
+
+pub fn scan(progress: &mut dyn FnMut(usize, usize), previous: &[Conversation]) -> ScanOutput {
     let started = Instant::now();
     let names = load_codex_thread_names();
+    let mut reused: HashMap<String, &Conversation> = HashMap::with_capacity(previous.len());
+    for row in previous {
+        reused.insert(reuse_key(&row.path, row.size, row.mtime_ms), row);
+    }
 
     let codex_base = agent_home(CODEX);
     let mut codex_files: Vec<(PathBuf, bool)> = Vec::new();
@@ -977,15 +1243,36 @@ pub fn scan(progress: &mut dyn FnMut(usize, usize)) -> ScanOutput {
     progress(done, total);
 
     for (path, archived) in codex_files.iter() {
-        if let Some(row) = codex_conversation(path, *archived, &names) {
-            rows.push(row);
+        let cached = fs::metadata(path).ok().and_then(|md| {
+            let key = reuse_key(&path.to_string_lossy(), md.len(), file_ms(&md));
+            reused
+                .get(&key)
+                .copied()
+                .filter(|r| r.agent == CODEX && r.in_archive_dir == *archived)
+        });
+        match cached {
+            Some(row) => rows.push(row.clone()),
+            None => {
+                if let Some(row) = codex_conversation(path, *archived, &names) {
+                    rows.push(row);
+                }
+            }
         }
         done += 1;
         progress(done, total);
     }
     for path in dsh_files.iter() {
-        if let Some(row) = dsh_conversation(path) {
-            rows.push(row);
+        let cached = fs::metadata(path).ok().and_then(|md| {
+            let key = reuse_key(&path.to_string_lossy(), md.len(), file_ms(&md));
+            reused.get(&key).copied().filter(|r| r.agent == DSH)
+        });
+        match cached {
+            Some(row) => rows.push(row.clone()),
+            None => {
+                if let Some(row) = dsh_conversation(path) {
+                    rows.push(row);
+                }
+            }
         }
         done += 1;
         progress(done, total);

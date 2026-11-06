@@ -172,6 +172,10 @@ function ensureSelection() {
   }
 }
 
+// 扫描期间每 700ms 拉一次全量 state；表格全量重建很贵，降频到 2s 一次，
+// 进度数字（renderScanState）仍然每拍刷新。
+let lastTablePaint = 0;
+
 function schedulePoll() {
   clearTimeout(S.pollTimer);
   S.pollTimer = setTimeout(async () => {
@@ -181,10 +185,15 @@ function schedulePoll() {
       S.scanning = data.scanning && data.scanning.running;
       S.indexing = Boolean(data.indexing);
       renderScanState();
-      renderTable();
-      renderAgents();
-      if (S.scanning || S.indexing) schedulePoll();
-      else renderAll();
+      if (S.scanning || S.indexing) {
+        if (Date.now() - lastTablePaint >= 2000) {
+          renderTable();
+          renderAgents();
+        }
+        schedulePoll();
+      } else {
+        renderAll();
+      }
     } catch {
       S.scanning = false;
     }
@@ -469,15 +478,16 @@ function renderBuckets() {
   });
 }
 
-function statusOf(c) {
-  if (c.readonly) return { cls: 'readonly', label: '数据库存储' };
-  if (c.inArchiveDir) return { cls: 'archived', label: '源已归档' };
-  if (c.archived) return { cls: 'archived', label: '已归档' };
-  if (Date.now() - Date.parse(c.mtime) < 86400000) return { cls: 'active', label: '活跃' };
-  return { cls: 'recent', label: '近期' };
+// 列表里用户最关心「这条能不能删」，因此把技术状态换成可操作状态。
+function deleteStatusOf(c) {
+  if (!canDelete(c)) return { cls: 'readonly', label: '只读' };
+  if (c.readonly) return { cls: 'db', label: '数据库可删' };
+  if (c.archived) return { cls: 'archived', label: '已归档·可删' };
+  return { cls: 'active', label: '可删除' };
 }
 
 function renderTable() {
+  lastTablePaint = Date.now();
   const rows = visibleRows();
   const body = $('#tableBody');
   const wrap = $('.table-wrap');
@@ -487,21 +497,22 @@ function renderTable() {
   $('#countArchived').textContent = conversations().filter((c) => c.archived).length;
 
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="9"><div class="empty-state"><b>${S.scanning ? '正在扫描…' : '没有匹配的会话'}</b>${S.scanning ? '正在读取本机 Agent 数据' : '试试调整筛选条件或重新扫描'}</div></td></tr>`;
+    body.innerHTML = `<tr><td colspan="5"><div class="empty-state"><b>${S.scanning ? '正在扫描…' : '没有匹配的会话'}</b>${S.scanning ? '正在读取本机 Agent 数据' : '试试调整筛选条件或重新扫描'}</div></td></tr>`;
   } else {
-    body.innerHTML = rows.map((c) => {
-      const st = statusOf(c);
-      const large = c.size > 20 * 1024 * 1024;
+    // 与会话页一致：最多渲染 500 行，避免会话上千时每次轮询全量重建 DOM
+    const capped = rows.slice(0, 500);
+    body.innerHTML = capped.map((c) => {
+      const st = deleteStatusOf(c);
       return `
       <tr data-id="${esc(c.id)}" class="${S.activeId === c.id ? 'is-active' : ''} ${S.selected.has(c.id) ? 'is-selected' : ''}" tabindex="0">
-        <td><label class="check" data-stop><input type="checkbox" class="row-check" data-id="${esc(c.id)}" ${S.selected.has(c.id) ? 'checked' : ''} aria-label="选择 ${esc(c.title)}"><span class="check__box"><svg><use href="#i-check"/></svg></span></label></td>
-        <td><span class="agent-tile" style="${tintStyle(c.agent)}" title="${esc(c.agent)}">${agentLogo(c.agent)}</span></td>
-        <td class="c-project"><span class="project-tag" title="${esc(c.projectPath || c.project)}">${esc(c.project)}</span></td>
-        <td class="c-title" title="${esc(c.path)}">${esc(c.title)}</td>
-        <td class="c-num">${fmtNum(c.messages)}</td>
-        <td class="c-size">${c.size ? fmtBytes(c.size) : '—'}${c.compressed ? '<span>zst</span>' : ''}</td>
-        <td class="c-time">${esc(relTime(c.mtime))}</td>
-        <td><span class="pill pill--${c.readonly ? 'readonly' : (large && !c.archived ? 'large' : st.cls)}">${c.readonly ? st.label : (large && !c.archived ? '大文件' : st.label)}</span></td>
+        <td><label class="check" data-stop><input type="checkbox" class="row-check" data-id="${esc(c.id)}" ${S.selected.has(c.id) ? 'checked' : ''} aria-label="选择 ${esc(displayTitle(c))}"><span class="check__box"><svg><use href="#i-check"/></svg></span></label></td>
+        <td><span class="agent-tile" style="${tintStyle(c.agent)}" title="${esc(agentName(c.agent))}">${agentLogo(c.agent)}</span></td>
+        <td class="c-title" title="${esc(displayTitle(c))}">
+          <span class="c-title__text">${esc(displayTitle(c))}</span>
+          ${tableSnippetHtml(c)}
+          <span class="c-title__meta">${esc(srowMetaText(c))}</span>
+        </td>
+        <td><span class="pill pill--${esc(st.cls)}">${esc(st.label)}</span></td>
         <td class="c-ops">
           <div class="row-actions" data-stop>
             ${c.inArchiveDir
@@ -517,7 +528,9 @@ function renderTable() {
           </div>
         </td>
       </tr>`;
-    }).join('');
+    }).join('') + (rows.length > capped.length
+      ? `<tr><td colspan="5"><p class="list-more">仅显示前 ${capped.length} 条，用搜索缩小范围</p></td></tr>`
+      : '');
   }
 
   if (wrap) wrap.scrollTop = scrollTop;
@@ -610,8 +623,8 @@ async function renderPreview() {
     <div class="preview__head">
       <span class="agent-tile" style="${tintStyle(c.agent)}">${agentLogo(c.agent)}</span>
       <div style="min-width:0">
-        <div class="preview__title">${esc(c.title)}</div>
-        <div class="preview__meta">${esc(c.project)} · ${fmtNum(c.messages)} 条消息 · ${esc(relTime(c.mtime))}</div>
+        <div class="preview__title">${esc(displayTitle(c))}</div>
+        <div class="preview__meta">${esc(stripPaths(c.project) || '未知项目')} · ${esc(relTime(c.mtime))}</div>
       </div>
     </div>
     <div class="preview__msgs" id="previewMsgs"></div>`;
@@ -624,6 +637,10 @@ async function renderPreview() {
     const data = BRIDGE
       ? await BRIDGE.preview(c.id)
       : await api(`/api/preview?id=${encodeURIComponent(c.id)}`);
+    // 预览正文可能很大，缓存只保留最近 50 条，正常浏览时内存不再无限上涨
+    if (S.previews.size >= 50) {
+      S.previews.delete(S.previews.keys().next().value);
+    }
     S.previews.set(c.id, data);
     if (S.activeId === c.id) paintPreview(c, data);
   } catch (err) {
@@ -636,8 +653,16 @@ async function renderPreview() {
 function paintPreview(c, data) {
   const msgs = $('#previewMsgs');
   if (!msgs) return;
-  const list = (data.messages || []).map((m) => `
-    <div class="msg msg--${m.role === 'user' ? 'user' : 'assistant'}">${esc(m.text)}${m.time ? `<time>${esc(fmtClock(m.time))}</time>` : ''}</div>`).join('');
+  const who = agentName(c.agent);
+  const list = (data.messages || []).map((m) => {
+    const role = m.role === 'user' ? 'user' : 'assistant';
+    const label = role === 'user' ? '你' : who;
+    const body = role === 'user' ? stripAttachmentPrefix(m.text) : m.text;
+    return `<article class="msg msg--${role}">
+      <div class="msg__meta"><span class="msg__role">${esc(label)}</span>${m.time ? `<time class="msg__time">${esc(fmtClock(m.time))}</time>` : ''}</div>
+      <div class="msg__body">${esc(body)}</div>
+    </article>`;
+  }).join('');
   msgs.innerHTML = list || `<div class="preview__missing">这个文件里没有可读的对话内容</div>`;
   if (data.truncated) {
     const hint = document.createElement('p');
@@ -677,9 +702,7 @@ function askDelete(ids) {
   if (!rows.length) return;
   const dbRows = rows.filter((r) => r.readonly);
   const fileRows = rows.filter((r) => !r.readonly);
-  const bytes = rows.reduce((n, r) => n + r.size, 0);
-  const preview = rows.slice(0, 6).map((r) => `<div><b>${esc(r.title)}</b><span>${r.readonly ? '数据库记录' : fmtBytes(r.size)}</span></div>`).join('');
-  const more = rows.length > 6 ? `<div><b>… 以及另外 ${rows.length - 6} 个会话</b><span></span></div>` : '';
+  const preview = deletePreviewHtml(rows);
   const onlyDb = dbRows.length === rows.length;
 
   const modeBlock = onlyDb ? `
@@ -697,7 +720,7 @@ function askDelete(ids) {
     title: rows.length === 1 ? '删除会话' : `删除 ${rows.length} 个会话`,
     body: `
       <p>这会移除 ${rows.length} 个会话${fileRows.length ? `，释放 <b>${fmtBytes(fileRows.reduce((n, r) => n + r.size, 0))}</b>` : ''}。删除后对话将无法再从这个工具或原 Agent 中打开。</p>
-      <div class="file-list">${preview}${more}</div>
+      <div class="file-list del-list">${preview}</div>
       ${modeBlock}`,
     actions: [
       { label: '取消', cls: 'btn--ghost', close: true },
@@ -734,14 +757,13 @@ function askDelete(ids) {
 function askForceDelete(ids) {
   const rows = ids.map((id) => conversations().find((c) => c.id === id)).filter(Boolean);
   if (!rows.length) return;
-  const preview = rows.slice(0, 6).map((r) => `<div><b>${esc(r.title)}</b><span>${r.readonly ? '数据库记录' : fmtBytes(r.size)}</span></div>`).join('');
-  const more = rows.length > 6 ? `<div><b>… 以及另外 ${rows.length - 6} 个会话</b><span></span></div>` : '';
+  const preview = deletePreviewHtml(rows);
 
   openModal({
     title: `强制删除 ${rows.length} 个会话`,
     body: `
       <p>强制删除会绕过回收站：清掉只读属性、重试占用中的文件，并从 Agent 数据库中逐表移除记录，最后 <code>VACUUM</code> 回收空间。</p>
-      <div class="file-list">${preview}${more}</div>
+      <div class="file-list del-list">${preview}</div>
       <div class="warn"><svg><use href="#i-warning"/></svg><span>无法恢复，也不会进入回收站。如果 Agent 正在运行，它可能仍持有数据库锁，建议先关闭对应 Agent。</span></div>`,
     actions: [
       { label: '取消', cls: 'btn--ghost', close: true },
@@ -839,8 +861,14 @@ function bindChrome() {
     document.getElementById('globalSearch').value = value;
     renderTable();
   };
-  $('#globalSearch').addEventListener('input', (e) => onSearch(e.target.value));
-  $('#tableSearch').addEventListener('input', (e) => onSearch(e.target.value));
+  // 与会话页搜索一致：输入时防抖，避免每个按键全量重建表格
+  let searchTimer = null;
+  const onSearchDebounced = (value) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => onSearch(value), 180);
+  };
+  $('#globalSearch').addEventListener('input', (e) => onSearchDebounced(e.target.value));
+  $('#tableSearch').addEventListener('input', (e) => onSearchDebounced(e.target.value));
 
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -961,13 +989,117 @@ function sessionListData() {
   if (VS.project) rows = rows.filter((c) => (c.projectPath || c.project) === VS.project);
   if (VS.agent !== 'all') rows = rows.filter((c) => c.agent === VS.agent);
   if (VS.starredOnly) rows = rows.filter((c) => VS.stars.has(c.id));
-  if (q) rows = rows.filter((c) => `${c.title} ${c.project} ${c.path} ${agentName(c.agent)}`.toLowerCase().includes(q));
+  if (q) rows = rows.filter((c) => `${displayTitle(c)} ${c.title} ${c.project} ${c.path} ${c.lastUser || ''} ${c.lastAssistant || ''} ${agentName(c.agent)}`.toLowerCase().includes(q));
   const sorters = {
     recent: (a, b) => Date.parse(b.mtime) - Date.parse(a.mtime),
     size: (a, b) => b.size - a.size,
     messages: (a, b) => b.messages - a.messages,
   };
   return rows.sort(sorters[VS.sort] || sorters.recent);
+}
+
+function stripPaths(text) {
+  let s = String(text || '');
+  s = s.replace(/@"[^"]*"/g, ' ');
+  s = s.replace(/@'[^']*'/g, ' ');
+  s = s.replace(/@\[[^\]]*\]/g, ' ');
+  s = s.replace(/`[^`]*[\\/][^`]*`/g, ' ');
+  s = s.replace(/\bfile:\/\/\/[^\s]+/gi, ' ');
+  s = s.replace(/\b[A-Za-z]:\\[^\s"'<>|]+/g, ' ');
+  s = s.replace(/https?:\/\/\S+/g, ' ');
+  s = s.replace(/^\/(?:目标|goal)\s*/i, '');
+  // 去掉路径后常留下空的列表符号、反引号和 Markdown 标记。
+  s = s.replace(/`{1,3}/g, ' ');
+  s = s.replace(/\*\*|__|~~/g, '');
+  s = s.replace(/(^|\s)[-*•]\s*(?=\s|$|[-*•])/g, ' ');
+  s = s.replace(/[\[\](){}<>]+/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  s = s.replace(/^[\s:：,，;；\-–—]+/, '').replace(/[\s:：,，;；\-–—]+$/, '');
+  return s;
+}
+
+function stripAttachmentPrefix(text) {
+  let s = String(text || '');
+  let prev;
+  do {
+    prev = s;
+    s = s.replace(/^\s*(?:@"[^"]*"|@'[^']*'|"[^"]*"|'[^']*'|@\[[^\]]*\]|`[^`]*[\\/][^`]*`|[A-Za-z]:\\[^\s"'<>|]+|file:\/\/\/\S+)\s*/i, '');
+  } while (s !== prev && s);
+  return s.trim();
+}
+
+function cleanSnippet(text) {
+  return stripPaths(text).slice(0, 180);
+}
+
+function chatPreviewHtml(c) {
+  const user = cleanSnippet(c.lastUser);
+  const agent = cleanSnippet(c.lastAssistant);
+  const lines = [];
+  if (user) {
+    lines.push(`<span class="chat-row chat-row--user"><span class="chat-bubble chat-bubble--user"><em>你</em><span>${esc(user)}</span></span></span>`);
+  }
+  if (agent) {
+    lines.push(`<span class="chat-row chat-row--agent"><span class="chat-bubble chat-bubble--agent"><em>${esc(agentName(c.agent))}</em><span>${esc(agent)}</span></span></span>`);
+  }
+  if (lines.length) return `<span class="chat-preview">${lines.join('')}</span>`;
+  const placeholder = S.scanning || S.indexing
+    ? '正在读取最近对话…'
+    : (c.previewable ? '没有可读的对话正文' : '数据库会话，正文请在原 Agent 应用中查看');
+  return `<span class="chat-preview-empty">${esc(placeholder)}</span>`;
+}
+
+function tableSnippetHtml(c) {
+  return chatPreviewHtml(c);
+}
+
+function srowSnippetHtml(c) {
+  return chatPreviewHtml(c);
+}
+function canDelete(c) {
+  return !(c.readonly && !String(c.path || '').includes('#'));
+}
+
+// 有些 Agent 会把内部续跑提示存成「用户消息」，于是标题全是同一句英文模板。
+// 列表里改用最近一条真实提问作为标题，三个「A goal has been set…」才分得清。
+const TITLE_NOISE = [
+  'A goal has been set.',
+  'The objective below is user-provided',
+  'This session is being continued',
+  'Current runtime context',
+  '<codex_internal_context',
+  '<untrusted_objective>',
+  '[SYSTEM NOTIFICATION',
+];
+
+function displayTitle(c) {
+  const raw = stripPaths(c.title);
+  const noisy = !raw || TITLE_NOISE.some((p) => raw.startsWith(p));
+  if (!noisy && raw.length >= 2) return raw.length > 64 ? `${raw.slice(0, 64)}…` : raw;
+  const fromSnippet = cleanSnippet(c.lastUser || c.lastAssistant);
+  if (fromSnippet && !TITLE_NOISE.some((p) => fromSnippet.startsWith(p))) {
+    return fromSnippet.length > 64 ? `${fromSnippet.slice(0, 64)}…` : fromSnippet;
+  }
+  return `${stripPaths(c.project) || '会话'} · ${relTime(c.mtime)}`;
+}
+
+function deletePreviewHtml(rows) {
+  const shown = rows.slice(0, 6).map((r) => `<div class="del-row">
+      <div class="del-row__main">
+        <b>${esc(displayTitle(r))}</b>
+        ${chatPreviewHtml(r)}
+        <span class="del-row__meta">${esc(srowMetaText(r))}</span>
+      </div>
+      <span class="del-row__size">${r.readonly ? '数据库记录' : fmtBytes(r.size)}</span>
+    </div>`).join('');
+  const more = rows.length > 6 ? `<div class="del-row"><b>… 以及另外 ${rows.length - 6} 个会话</b><span></span></div>` : '';
+  return shown + more;
+}
+
+function srowMetaText(c) {
+  const parts = [stripPaths(c.project) || '未知项目', relTime(c.mtime)];
+  if (c.size) parts.push(fmtBytes(c.size));
+  return parts.join(' · ');
 }
 
 function renderSessionRows() {
@@ -993,21 +1125,28 @@ function renderSessionRows() {
   }
   const capped = rows.slice(0, 500);
   box.innerHTML = capped.map((c) => {
-    const st = statusOf(c);
-    return `<button type="button" class="srow${c.id === VS.activeId ? ' is-active' : ''}" data-id="${esc(c.id)}" role="option" aria-selected="${c.id === VS.activeId}">
-      <span class="srow__logo" style="${tintStyle(c.agent)}">${agentLogo(c.agent)}</span>
-      <span class="srow__main">
-        <b class="srow__title">${VS.stars.has(c.id) ? '<i class="star">★</i>' : ''}${esc(c.title || '未命名会话')}</b>
-        <span class="srow__sub">${esc(c.project || '未知项目')} · ${relTime(c.mtime)}</span>
-      </span>
-      <span class="srow__side">
-        <span class="pill pill--sm pill--${esc(st.cls)}">${esc(st.label)}</span>
-        <span class="srow__num">${fmtNum(c.messages)} 条 · ${fmtBytes(c.size)}</span>
-      </span>
-    </button>`;
+    const st = deleteStatusOf(c);
+    return `<div class="srow-wrap">
+      <button type="button" class="srow${c.id === VS.activeId ? ' is-active' : ''}" data-id="${esc(c.id)}" role="option" aria-selected="${c.id === VS.activeId}" title="${esc(displayTitle(c))}">
+        <span class="srow__logo" style="${tintStyle(c.agent)}">${agentLogo(c.agent)}</span>
+        <span class="srow__main">
+          <b class="srow__title">${VS.stars.has(c.id) ? '<i class="star">★</i>' : ''}${esc(displayTitle(c))}</b>
+          ${srowSnippetHtml(c)}
+          <span class="srow__meta">${esc(srowMetaText(c))}</span>
+        </span>
+        <span class="srow__side">
+          <span class="pill pill--sm pill--${esc(st.cls)}">${esc(st.label)}</span>
+        </span>
+      </button>
+      ${canDelete(c) ? `<button type="button" class="srow__quick" data-id="${esc(c.id)}" title="删除这个会话" aria-label="删除这个会话"><svg><use href="#i-trash"/></svg></button>` : ''}
+    </div>`;
   }).join('') + (rows.length > capped.length ? `<p class="list-more">仅显示前 ${capped.length} 条，用搜索缩小范围</p>` : '');
 
   $$('.srow', box).forEach((el) => el.addEventListener('click', () => openTranscript(el.dataset.id)));
+  $$('.srow__quick', box).forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    askDelete([el.dataset.id]);
+  }));
 
   const starBtn = $('#starFilter');
   if (starBtn) {
@@ -1051,17 +1190,28 @@ async function runContentSearch() {
   }
   box.innerHTML = res.groups.map((g) => {
     const c = g.conversation;
-    return `<button type="button" class="srow srow--hit${c.id === VS.activeId ? ' is-active' : ''}" data-id="${esc(c.id)}" data-seq="${g.hits[0].seq}">
-      <span class="srow__logo" style="${tintStyle(c.agent)}">${agentLogo(c.agent)}</span>
-      <span class="srow__main">
-        <b class="srow__title">${esc(c.title || '未命名会话')}</b>
-        <span class="srow__sub">${esc(c.project || '未知项目')} · ${relTime(c.mtime)}</span>
-        ${g.hits.map((h) => `<span class="hit"><em>${h.role === 'user' ? '你' : esc(agentName(c.agent))}</em>${esc(h.snippet)}</span>`).join('')}
-      </span>
-    </button>`;
+    const st = deleteStatusOf(c);
+    return `<div class="srow-wrap">
+      <button type="button" class="srow srow--hit${c.id === VS.activeId ? ' is-active' : ''}" data-id="${esc(c.id)}" data-seq="${g.hits[0].seq}" title="${esc(displayTitle(c))}">
+        <span class="srow__logo" style="${tintStyle(c.agent)}">${agentLogo(c.agent)}</span>
+        <span class="srow__main">
+          <b class="srow__title">${esc(displayTitle(c))}</b>
+          <span class="srow__meta">${esc(srowMetaText(c))}</span>
+          ${g.hits.map((h) => `<span class="hit"><em>${h.role === 'user' ? '你' : esc(agentName(c.agent))}</em>${esc(h.snippet)}</span>`).join('')}
+        </span>
+        <span class="srow__side">
+          <span class="pill pill--sm pill--${esc(st.cls)}">${esc(st.label)}</span>
+        </span>
+      </button>
+      ${canDelete(c) ? `<button type="button" class="srow__quick" data-id="${esc(c.id)}" title="删除这个会话" aria-label="删除这个会话"><svg><use href="#i-trash"/></svg></button>` : ''}
+    </div>`;
   }).join('');
   $$('.srow', box).forEach((el) => el.addEventListener('click', async () => {
     await openTranscript(el.dataset.id, false, Number(el.dataset.seq) || 0);
+  }));
+  $$('.srow__quick', box).forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    askDelete([el.dataset.id]);
   }));
 }
 
@@ -1077,8 +1227,8 @@ async function openTranscript(id, silent = false, focusSeq = 0) {
     if (empty) empty.hidden = true;
     const pane = $('#transcript');
     if (pane) { pane.hidden = false; $('#tScroll').innerHTML = '<p class="transcript__loading">正在读取对话…</p>'; }
-    $('#tTitle').textContent = c.title || '未命名会话';
-    $('#tMeta').textContent = `${agentName(c.agent)} · ${c.project || '未知项目'} · ${fmtNum(c.messages)} 条消息 · ${fmtBytes(c.size)}`;
+    $('#tTitle').textContent = displayTitle(c);
+    $('#tMeta').textContent = `${agentName(c.agent)} · ${stripPaths(c.project) || '未知项目'} · ${fmtNum(c.messages)} 条消息 · ${fmtBytes(c.size)}`;
   }
   try {
     const t = BRIDGE
@@ -1122,9 +1272,10 @@ const PAGE = 120;
 function msgHtml(m, who) {
   const role = m.role === 'user' ? 'user' : 'assistant';
   const label = role === 'user' ? '你' : who;
+  const body = role === 'user' ? stripAttachmentPrefix(m.text) : m.text;
   return `<article class="msg msg--${role}" data-seq="${m.seq}">
-    <div class="msg__gutter"><span class="msg__role">${esc(label)}</span>${m.time ? `<time class="msg__time">${esc(fmtClock(m.time))}</time>` : ''}</div>
-    <div class="msg__body">${mdToHtml(m.text)}</div>
+    <div class="msg__meta"><span class="msg__role">${esc(label)}</span>${m.time ? `<time class="msg__time">${esc(fmtClock(m.time))}</time>` : ''}</div>
+    <div class="msg__body">${mdToHtml(body)}</div>
   </article>`;
 }
 
@@ -1134,9 +1285,9 @@ function renderTranscript() {
   const c = t.conversation;
   $('#transcriptEmpty').hidden = true;
   $('#transcript').hidden = false;
-  $('#tTitle').textContent = c.title || '未命名会话';
-  const st = statusOf(c);
-  $('#tMeta').textContent = `${agentName(c.agent)} · ${c.project || '未知项目'} · ${fmtNum(c.messages)} 条消息 · ${fmtBytes(c.size)} · ${st.label}`;
+  $('#tTitle').textContent = displayTitle(c);
+  const st = deleteStatusOf(c);
+  $('#tMeta').textContent = `${agentName(c.agent)} · ${stripPaths(c.project) || '未知项目'} · ${fmtNum(c.messages)} 条消息 · ${fmtBytes(c.size)} · ${st.label}`;
   $('#tArchive').textContent = c.archived ? '取消归档' : '归档';
   $('#tArchive').disabled = Boolean(c.inArchiveDir);
   $('#tDelete').disabled = false;
@@ -1551,7 +1702,7 @@ function setupTitlebar() {
     await load();
   } catch (err) {
     $('#scanMeta').textContent = BRIDGE ? '读取本机索引失败' : '无法连接本地服务，请确认启动窗口仍在运行';
-    $('#tableBody').innerHTML = `<tr><td colspan="9"><div class="empty-state"><b>连接失败</b>${esc(errText(err))}</div></td></tr>`;
+    $('#tableBody').innerHTML = `<tr><td colspan="5"><div class="empty-state"><b>连接失败</b>${esc(errText(err))}</div></td></tr>`;
   }
   bindChrome();
   renderAll();

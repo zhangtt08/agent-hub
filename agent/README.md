@@ -27,7 +27,7 @@ POST /api/agent/tool      -> body { tool, input } -> { ok: true, tool, ms, data 
 
 | 工具 | 风险 | 说明 |
 |---|---|---|
-| `agenthub.overview` | read | 获取全机 Agent 对话概览统计（总数、总占用、总消息数、已装 Agent、5 类清理候选） |
+| `agenthub.overview` | read | 获取全机 Agent 对话概览统计（总数、总占用、总消息数、已装 Agent、3 类清理候选） |
 | `agenthub.list_agents` | read | 列出支持和已识别的所有 Agent（Codex、DSH、Antigravity、Qoder 等）及占用与路径 |
 | `agenthub.list_sessions` | read | 多维检索会话列表（按 Agent、关键词、星标、归档、排序） |
 | `agenthub.get_transcript` | read | 读取指定会话的全量时间线消息内容 |
@@ -35,7 +35,7 @@ POST /api/agent/tool      -> body { tool, input } -> { ok: true, tool, ms, data 
 | `agenthub.star_session` | write | 会话加星收藏 / 取消收藏 |
 | `agenthub.archive_session` | write | 会话归档 / 取消归档 |
 | `agenthub.export_markdown` | write | 将会话完整导出为 Markdown 文档 |
-| `agenthub.cleanup_candidates` | read | 列出清理中心的 5 类候选会话（超期、超大、极短、归档） |
+| `agenthub.cleanup_candidates` | read | 列出清理中心的 3 类候选会话（超期、极短、归档） |
 | `agenthub.delete_sessions` | **exec** | 删除会话释放空间（移入回收站或永久删除）；**必须 `confirm: true`** |
 
 ## MCP 配置示例
