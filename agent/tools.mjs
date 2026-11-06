@@ -56,6 +56,23 @@ function openIndexDb(readOnly = true) {
   }
 }
 
+// SQLite 的 LIKE 对 ASCII 大小写不敏感，并把 % 与 _ 当通配符。不转义的话，
+// 搜 "100%" 会命中任意含 "100" 后接任意字符的消息，片段里也就找不到查询词。
+function likePattern(query) {
+  return `%${query.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+}
+
+// 与 LIKE 一致的大小写折叠定位。toLowerCase 可能改变长度（如 İ → i̇），
+// 所以逐个候选位置用原文校验，保证返回的下标能直接切进原文。
+function foldIndexOf(text, needle) {
+  const foldedNeedle = needle.toLowerCase();
+  const foldedText = text.toLowerCase();
+  for (let at = foldedText.indexOf(foldedNeedle); at >= 0; at = foldedText.indexOf(foldedNeedle, at + 1)) {
+    if (text.slice(at, at + needle.length).toLowerCase() === foldedNeedle) return at;
+  }
+  return -1;
+}
+
 // 辅助哈希
 function fnv1a(str) {
   let h = 0xcbf29ce484222325n;
@@ -569,8 +586,8 @@ export const tools = [
       if (!db) return { ready: false, groups: [] };
 
       const limit = Math.min(100, Math.max(1, Number(input.limit) || 30));
-      const stmt = db.prepare('SELECT session_id, seq, role, text FROM messages WHERE text LIKE ? LIMIT ?');
-      const hits = stmt.all(`%${q}%`, limit * 4);
+      const stmt = db.prepare("SELECT session_id, seq, role, text FROM messages WHERE text LIKE ? ESCAPE '\\' LIMIT ?");
+      const hits = stmt.all(likePattern(q), limit * 4);
 
       const rows = scanAllRows();
       const groupsMap = new Map();
@@ -583,9 +600,10 @@ export const tools = [
         }
         const g = groupsMap.get(h.session_id);
         if (g.hits.length < 3) {
-          const idx = h.text.indexOf(q);
-          const start = Math.max(0, idx - 40);
-          const end = Math.min(h.text.length, idx + q.length + 40);
+          // 找不到时退回正文开头（80 字），而不是拿 -1 当下标算出偏移窗口。
+          const idx = foldIndexOf(h.text, q);
+          const start = idx < 0 ? 0 : Math.max(0, idx - 40);
+          const end = idx < 0 ? Math.min(h.text.length, 80) : Math.min(h.text.length, idx + q.length + 40);
           const snippet = (start > 0 ? '…' : '') + h.text.slice(start, end).replace(/[\r\n]+/g, ' ') + (end < h.text.length ? '…' : '');
           g.hits.push({ seq: h.seq, role: h.role, snippet });
         }
